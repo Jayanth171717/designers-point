@@ -18,7 +18,7 @@ const io = new Server(server);
 
 // Email configuration
 const EMAIL_HOST = process.env.EMAIL_HOST || 'smtp.gmail.com';
-const EMAIL_PORT = process.env.EMAIL_PORT || 587;
+const EMAIL_PORT = parseInt(process.env.EMAIL_PORT) || 587;
 const EMAIL_USER = process.env.EMAIL_USER || 'pavankumar973106@gmail.com';
 const EMAIL_PASS = process.env.EMAIL_PASS || '';
 
@@ -828,6 +828,22 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
   });
+});
+
+// Debug endpoint - remove in production
+app.get('/api/debug/email-test', async (req, res) => {
+  try {
+    const testEmail = 'pavankumar973106@gmail.com';
+    const info = await transporter.sendMail({
+      from: `"Debug Test" <${EMAIL_USER}>`,
+      to: testEmail,
+      subject: 'Test Email',
+      text: 'Test email from Designers Point'
+    });
+    res.json({ success: true, messageId: info.messageId });
+  } catch (err) {
+    res.json({ success: false, error: err.message, code: err.code });
+  }
 });
 
 // Debug endpoint - remove in production
