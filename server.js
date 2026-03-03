@@ -8,7 +8,7 @@ const bcrypt = require('bcryptjs');
 const multer = require('multer');
 const fs = require('fs');
 const Razorpay = require('razorpay');
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 
 const { initDatabase, runQuery, getOne, getAll } = require('./database');
 
@@ -22,20 +22,12 @@ const EMAIL_PORT = parseInt(process.env.EMAIL_PORT) || 587;
 const EMAIL_USER = process.env.EMAIL_USER || 'pavankumar973106@gmail.com';
 const EMAIL_PASS = process.env.EMAIL_PASS || '';
 
+// Resend configuration
+const resend = new Resend(EMAIL_PASS);
+
 // Session configuration
 const isProduction = process.env.NODE_ENV === 'production';
 const SESSION_SECRET = process.env.SESSION_SECRET || 'designers-point-secret-key-2024';
-
-// Create email transporter
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 465,
-  secure: true,
-  auth: {
-    user: EMAIL_USER,
-    pass: EMAIL_PASS
-  }
-});
 
 // OTP functions
 function generateOTP() {
@@ -67,26 +59,24 @@ async function deleteOTP(email, purpose = 'registration') {
 }
 
 async function sendOTPEmail(email, otp) {
-  const mailOptions = {
-    from: `"Designers Point" <${EMAIL_USER}>`,
-    to: email,
-    subject: 'Your OTP for Registration - Designers Point',
-    html: `
-      <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #333;">Welcome to Designers Point!</h2>
-        <p>Your One-Time Password (OTP) for registration is:</p>
-        <div style="background: #f5f5f5; padding: 15px; text-align: center; font-size: 32px; font-weight: bold; letter-spacing: 5px; margin: 20px 0;">
-          ${otp}
-        </div>
-        <p>This OTP will expire in 10 minutes.</p>
-        <p style="color: #666; font-size: 14px;">If you didn't request this, please ignore this email.</p>
-      </div>
-    `
-  };
-
   try {
-    const info = await transporter.sendMail(mailOptions);
-    console.log(`OTP sent to ${email}:`, info.messageId);
+    const info = await resend.emails.send({
+      from: 'Designers Point <onboarding@resend.dev>',
+      to: email,
+      subject: 'Your OTP for Registration - Designers Point',
+      html: `
+        <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #333;">Welcome to Designers Point!</h2>
+          <p>Your One-Time Password (OTP) for registration is:</p>
+          <div style="background: #f5f5f5; padding: 15px; text-align: center; font-size: 32px; font-weight: bold; letter-spacing: 5px; margin: 20px 0;">
+            ${otp}
+          </div>
+          <p>This OTP will expire in 10 minutes.</p>
+          <p style="color: #666; font-size: 14px;">If you didn't request this, please ignore this email.</p>
+        </div>
+      `
+    });
+    console.log(`OTP sent to ${email}:`, info.data?.id);
     return true;
   } catch (err) {
     console.error('Error sending email:', err.message);
@@ -825,22 +815,6 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
   });
-});
-
-// Debug endpoint - remove in production
-app.get('/api/debug/email-test', async (req, res) => {
-  try {
-    const testEmail = 'pavankumar973106@gmail.com';
-    const info = await transporter.sendMail({
-      from: `"Debug Test" <${EMAIL_USER}>`,
-      to: testEmail,
-      subject: 'Test Email',
-      text: 'Test email from Designers Point'
-    });
-    res.json({ success: true, messageId: info.messageId });
-  } catch (err) {
-    res.json({ success: false, error: err.message, code: err.code });
-  }
 });
 
 // Debug endpoint - remove in production
