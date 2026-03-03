@@ -46,10 +46,11 @@ async function saveOTP(email, otp, purpose = 'registration') {
   // Delete any existing OTPs for this email
   await runQuery('DELETE FROM email_otp WHERE email = ? AND purpose = ?', [email, purpose]);
 
-  // Insert new OTP (expires in 10 minutes) - PostgreSQL syntax
+  // Insert new OTP (expires in 10 minutes)
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
   await runQuery(
-    'INSERT INTO email_otp (email, otp, purpose, expires_at) VALUES (?, ?, ?, NOW() + INTERVAL \'10 minutes\')',
-    [email, otp, purpose]
+    'INSERT INTO email_otp (email, otp, purpose, expires_at) VALUES (?, ?, ?, ?)',
+    [email, otp, purpose, expiresAt]
   );
 }
 
@@ -452,9 +453,10 @@ app.post('/api/auth/register/send-otp', async (req, res) => {
     }
 
     // Check if OTP was recently sent (rate limiting)
+    const oneMinuteAgo = new Date(Date.now() - 60 * 1000);
     const recentOTP = await getOne(
-      "SELECT * FROM email_otp WHERE email = ? AND purpose = 'registration' AND created_at > NOW() - INTERVAL '1 minute'",
-      [email]
+      "SELECT * FROM email_otp WHERE email = ? AND purpose = 'registration' AND created_at > ?",
+      [email, oneMinuteAgo]
     );
 
     if (recentOTP) {
@@ -528,9 +530,10 @@ app.post('/api/auth/register', async (req, res) => {
     }
 
     // Check if OTP was recently sent (rate limiting)
+    const oneMinuteAgo = new Date(Date.now() - 60 * 1000);
     const recentOTP = await getOne(
-      "SELECT * FROM email_otp WHERE email = ? AND purpose = 'registration' AND created_at > NOW() - INTERVAL '1 minute'",
-      [email]
+      "SELECT * FROM email_otp WHERE email = ? AND purpose = 'registration' AND created_at > ?",
+      [email, oneMinuteAgo]
     );
 
     if (recentOTP) {
