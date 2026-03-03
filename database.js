@@ -8,7 +8,7 @@ async function initDatabase() {
   const config = {
     host: process.env.PGHOST || 'localhost',
     user: process.env.PGUSER || 'postgres',
-    password: process.env.PGPASSWORD || 'postgres',
+    password: process.env.PGPASSWORD || 'root',
     database: process.env.PGDATABASE || 'designers_point',
     port: process.env.PGPORT || 5432,
     max: 20,

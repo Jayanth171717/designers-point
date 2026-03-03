@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Checkout - Designers Point</title>
   <link rel="stylesheet" href="/css/styles.css">
-  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 </head>
 <body>
   <!-- Header -->
@@ -55,26 +54,22 @@
     <div class="container">
       <h2 style="margin-bottom: 40px;">Checkout</h2>
 
-      <div class="checkout-grid">
+      <!-- Login Required Message -->
+      <div id="login-required" style="display: none; text-align: center; padding: 60px 20px;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-bottom: 20px; color: var(--text-secondary);">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+        </svg>
+        <h3 style="margin-bottom: 10px;">Login Required</h3>
+        <p style="color: var(--text-secondary); margin-bottom: 20px;">Please login to place an order</p>
+        <a href="/login" class="btn btn-primary">Login</a>
+        <span style="margin: 0 10px;">or</span>
+        <a href="/register" class="btn btn-secondary">Register</a>
+      </div>
+
+      <div class="checkout-grid" id="checkout-content" style="display: none;">
         <div class="checkout-form">
           <form id="checkout-form" onsubmit="return handleCheckout(event)">
-            <!-- Contact Info -->
-            <div class="form-section">
-              <h3>Contact Information</h3>
-              <div class="form-group">
-                <label>Email Address</label>
-                <input type="email" id="email" required placeholder="your@email.com">
-              </div>
-              <div class="form-group">
-                <label>Full Name</label>
-                <input type="text" id="fullname" required placeholder="John Doe">
-              </div>
-              <div class="form-group">
-                <label>Phone Number</label>
-                <input type="tel" id="phone" required placeholder="+91 98765 43210">
-              </div>
-            </div>
-
             <!-- Shipping Address -->
             <div class="form-section">
               <h3>Shipping Address</h3>
@@ -137,35 +132,23 @@
                   <input type="text" id="postal" required placeholder="400001" maxlength="6" pattern="[0-9]{6}">
                 </div>
                 <div class="form-group">
-                  <label>Country</label>
-                  <select id="country" required>
-                    <option value="IN" selected>India</option>
-                  </select>
+                  <label>Phone Number</label>
+                  <input type="tel" id="phone" required placeholder="+91 98765 43210">
                 </div>
               </div>
             </div>
 
-            <!-- Payment Method -->
+            <!-- Payment Method (COD Only) -->
             <div class="form-section">
               <h3>Payment Method</h3>
               <div class="payment-options">
-                <label class="payment-option">
-                  <input type="radio" name="payment_method" value="cod" checked>
+                <label class="payment-option active">
+                  <input type="radio" name="payment_method" value="cod" checked style="display: none;">
                   <div class="payment-option-content">
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
                     <div>
                       <strong>Cash on Delivery</strong>
-                      <span>Pay when you receive (Recommended)</span>
-                    </div>
-                  </div>
-                </label>
-                <label class="payment-option">
-                  <input type="radio" name="payment_method" value="razorpay">
-                  <div class="payment-option-content">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg>
-                    <div>
-                      <strong>Pay Online (UPI / Cards / Netbanking)</strong>
-                      <span>Instant payment via Razorpay</span>
+                      <span>Pay when you receive your order</span>
                     </div>
                   </div>
                 </label>
@@ -217,30 +200,41 @@
   <script src="/socket.io/socket.io.js"></script>
   <script src="/js/app.js"></script>
   <script>
-    let razorpayKey = null;
-
-    // Get Razorpay key on load
-    async function getRazorpayKey() {
-      try {
-        const res = await fetch('/api/payment/key');
-        const data = await res.json();
-        razorpayKey = data.key;
-      } catch (e) {
-        console.error('Failed to get Razorpay key:', e);
-      }
-    }
-
     function initPage() {
       renderOrderItems();
-      getRazorpayKey();
 
-      // Payment method toggle
-      document.querySelectorAll('input[name="payment_method"]').forEach(radio => {
-        radio.addEventListener('change', function() {
-          document.querySelectorAll('.payment-option').forEach(opt => opt.classList.remove('active'));
-          this.closest('.payment-option').classList.add('active');
-        });
-      });
+      // Check if user is logged in
+      checkAuthAndShowContent();
+    }
+
+    async function checkAuthAndShowContent() {
+      try {
+        const res = await fetch('/api/auth/me');
+        const data = await res.json();
+
+        const loginRequired = document.getElementById('login-required');
+        const checkoutContent = document.getElementById('checkout-content');
+
+        if (data.user) {
+          // User is logged in, show checkout
+          loginRequired.style.display = 'none';
+          checkoutContent.style.display = 'grid';
+
+          // Pre-fill user info
+          if (data.user.name) {
+            // Show user info in console for debugging
+            console.log('Logged in as:', data.user.name);
+          }
+        } else {
+          // User not logged in, show message
+          loginRequired.style.display = 'block';
+          checkoutContent.style.display = 'none';
+        }
+      } catch (e) {
+        console.error('Auth check failed:', e);
+        document.getElementById('login-required').style.display = 'block';
+        document.getElementById('checkout-content').style.display = 'none';
+      }
     }
 
     function renderOrderItems() {
@@ -279,23 +273,26 @@
       document.getElementById('summary-total').textContent = formatPrice(total);
     }
 
-    function getOrderTotal() {
-      const subtotal = state.cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-      const shipping = 99;
-      const tax = subtotal * 0.18;
-      return subtotal + shipping + tax;
-    }
-
     async function handleCheckout(e) {
       e.preventDefault();
+
+      // Double check auth
+      const authRes = await fetch('/api/auth/me');
+      const authData = await authRes.json();
+
+      if (!authData.user) {
+        showToast('Please login to place an order', 'error');
+        setTimeout(() => {
+          window.location.href = '/login';
+        }, 1500);
+        return false;
+      }
 
       if (state.cart.length === 0) {
         showToast('Your cart is empty', 'error');
         return false;
       }
 
-      const email = document.getElementById('email').value;
-      const fullname = document.getElementById('fullname').value;
       const phone = document.getElementById('phone').value;
       const address = document.getElementById('address').value;
       const street = document.getElementById('street').value;
@@ -303,20 +300,16 @@
       const city = document.getElementById('city').value;
       const stateVal = document.getElementById('state').value;
       const postal = document.getElementById('postal').value;
-      const paymentMethod = document.querySelector('input[name="payment_method"]:checked').value;
 
       const fullAddress = `${address}${street ? ', ' + street : ''}${landmark ? ', Near ' + landmark : ''}, ${city}, ${stateVal} - ${postal}`;
 
       const orderData = {
-        guest_email: email,
-        guest_name: fullname,
-        shipping_name: fullname,
+        shipping_name: authData.user.name,
         shipping_phone: phone,
         shipping_address: fullAddress,
         city: city,
         state: stateVal,
         postal_code: postal,
-        payment_method: paymentMethod,
         items: state.cart.map(item => ({
           product_id: item.product_id,
           product_name: item.product_name,
@@ -333,134 +326,35 @@
       const btnText = document.getElementById('btn-text');
       const btnLoader = document.getElementById('btn-loader');
 
-      if (paymentMethod === 'razorpay') {
-        // Process with Razorpay
-        btn.disabled = true;
-        btnText.textContent = 'Processing...';
-        btnLoader.style.display = 'inline-block';
+      // COD only
+      btn.disabled = true;
+      btnText.textContent = 'Processing...';
+      btnLoader.style.display = 'inline-block';
 
-        try {
-          // Create order on server
-          const totalAmount = getOrderTotal();
-          const orderRes = await fetch('/api/payment/create-order', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ amount: totalAmount })
-          });
+      try {
+        const res = await fetch('/api/orders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(orderData)
+        });
 
-          const orderResult = await orderRes.json();
+        const data = await res.json();
 
-          if (!orderRes.ok) {
-            throw new Error(orderResult.error || 'Failed to create payment order');
-          }
-
-          // Open Razorpay checkout
-          const options = {
-            key: razorpayKey,
-            name: 'Designers Point',
-            description: 'Order Payment',
-            order_id: orderResult.id,
-            amount: orderResult.amount,
-            currency: orderResult.currency || 'INR',
-            handler: async function(response) {
-              // Verify payment
-              const verifyRes = await fetch('/api/payment/verify', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  razorpay_order_id: response.razorpay_order_id,
-                  razorpay_payment_id: response.razorpay_payment_id,
-                  razorpay_signature: response.razorpay_signature
-                })
-              });
-
-              const verifyResult = await verifyRes.json();
-
-              if (verifyRes.ok && verifyResult.verified) {
-                // Create order after successful payment
-                const createOrderRes = await fetch('/api/orders', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(orderData)
-                });
-
-                const createOrderResult = await createOrderRes.json();
-
-                if (createOrderRes.ok) {
-                  showToast('Payment successful! Order placed!', 'success');
-                  state.cart = [];
-                  updateCartUI();
-                  setTimeout(() => {
-                    window.location.href = `/orders?order=${createOrderResult.orderNumber}`;
-                  }, 1500);
-                } else {
-                  showToast(createOrderResult.error || 'Order creation failed', 'error');
-                }
-              } else {
-                showToast('Payment verification failed', 'error');
-              }
-
-              btn.disabled = false;
-              btnText.textContent = 'Place Order';
-              btnLoader.style.display = 'none';
-            },
-            modal: {
-              ondismiss: function() {
-                btn.disabled = false;
-                btnText.textContent = 'Place Order';
-                btnLoader.style.display = 'none';
-              }
-            },
-            prefill: {
-              name: fullname,
-              email: email,
-              contact: phone
-            },
-            theme: {
-              color: '#e94560'
-            }
-          };
-
-          const rzp = new Razorpay(options);
-          rzp.open();
-
-        } catch (err) {
-          console.error('Payment error:', err);
-          showToast(err.message || 'Payment failed. Please try again.', 'error');
+        if (res.ok) {
+          showToast('Order placed successfully! (COD)', 'success');
+          state.cart = [];
+          updateCartUI();
+          setTimeout(() => {
+            window.location.href = `/orders?order=${data.orderNumber}`;
+          }, 1500);
+        } else {
+          showToast(data.error || 'Order failed', 'error');
           btn.disabled = false;
           btnText.textContent = 'Place Order';
           btnLoader.style.display = 'none';
         }
-
-      } else {
-        // Cash on Delivery
-        btn.disabled = true;
-        btnText.textContent = 'Processing...';
-        btnLoader.style.display = 'inline-block';
-
-        try {
-          const res = await fetch('/api/orders', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(orderData)
-          });
-
-          const data = await res.json();
-
-          if (res.ok) {
-            showToast('Order placed successfully! (COD)', 'success');
-            state.cart = [];
-            updateCartUI();
-            setTimeout(() => {
-              window.location.href = `/orders?order=${data.orderNumber}`;
-            }, 1500);
-          } else {
-            showToast(data.error || 'Order failed', 'error');
-          }
-        } catch (err) {
-          showToast('Order failed. Please try again.', 'error');
-        }
-
+      } catch (err) {
+        showToast('Order failed. Please try again.', 'error');
         btn.disabled = false;
         btnText.textContent = 'Place Order';
         btnLoader.style.display = 'none';

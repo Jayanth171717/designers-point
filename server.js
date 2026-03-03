@@ -20,7 +20,7 @@ const io = new Server(server);
 const EMAIL_HOST = process.env.EMAIL_HOST || 'smtp.gmail.com';
 const EMAIL_PORT = process.env.EMAIL_PORT || 587;
 const EMAIL_USER = process.env.EMAIL_USER || 'pavankumar973106@gmail.com';
-const EMAIL_PASS = process.env.EMAIL_PASS || 'rzes wbza rxhl suly';
+const EMAIL_PASS = process.env.EMAIL_PASS || '';
 
 // Session configuration
 const isProduction = process.env.NODE_ENV === 'production';
@@ -34,6 +34,9 @@ const transporter = nodemailer.createTransport({
   auth: {
     user: EMAIL_USER,
     pass: EMAIL_PASS
+  },
+  tls: {
+    rejectUnauthorized: false
   }
 });
 
@@ -85,11 +88,12 @@ async function sendOTPEmail(email, otp) {
   };
 
   try {
-    await transporter.sendMail(mailOptions);
-    console.log(`OTP sent to ${email}`);
+    const info = await transporter.sendMail(mailOptions);
+    console.log(`OTP sent to ${email}:`, info.messageId);
     return true;
   } catch (err) {
-    console.error('Error sending email:', err);
+    console.error('Error sending email:', err.message);
+    console.error('Full error:', err);
     return false;
   }
 }
@@ -501,7 +505,7 @@ app.post('/api/auth/register/verify', async (req, res) => {
 
     // Check if this is the first user (make them admin)
     const userCount = await getOne('SELECT COUNT(*) as count FROM users');
-    const isAdmin = userCount?.count === 0 ? 1 : 0;
+    const isAdmin = parseInt(userCount?.count) === 0 ? 1 : 0;
 
     const sql = `INSERT INTO users (email, password, name, phone, is_admin) VALUES (?, ?, ?, ?, ?)`;
     await runQuery(sql, [email, hashedPassword, name, phone || null, isAdmin]);
