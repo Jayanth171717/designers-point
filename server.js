@@ -830,6 +830,17 @@ io.on('connection', (socket) => {
   });
 });
 
+// Debug endpoint - remove in production
+app.get('/api/debug/email-config', (req, res) => {
+  res.json({
+    EMAIL_HOST: EMAIL_HOST,
+    EMAIL_PORT: EMAIL_PORT,
+    EMAIL_USER: EMAIL_USER,
+    EMAIL_PASS_SET: !!EMAIL_PASS,
+    EMAIL_PASS_LENGTH: EMAIL_PASS ? EMAIL_PASS.length : 0
+  });
+});
+
 // Initialize database and start server
 const PORT = process.env.PORT || 3000;
 
