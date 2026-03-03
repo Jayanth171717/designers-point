@@ -28,15 +28,12 @@ const SESSION_SECRET = process.env.SESSION_SECRET || 'designers-point-secret-key
 
 // Create email transporter
 const transporter = nodemailer.createTransport({
-  host: EMAIL_HOST,
-  port: EMAIL_PORT,
-  secure: false,
+  host: 'smtp.gmail.com',
+  port: 465,
+  secure: true,
   auth: {
     user: EMAIL_USER,
     pass: EMAIL_PASS
-  },
-  tls: {
-    rejectUnauthorized: false
   }
 });
 
