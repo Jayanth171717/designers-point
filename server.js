@@ -8,12 +8,90 @@ const bcrypt = require('bcryptjs');
 const multer = require('multer');
 const fs = require('fs');
 const Razorpay = require('razorpay');
+const nodemailer = require('nodemailer');
 
-const { initDatabase, getDb, saveDatabase, runQuery, getOne, getAll } = require('./database');
+const { initDatabase, runQuery, getOne, getAll } = require('./database');
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
+
+// Email configuration
+const EMAIL_HOST = process.env.EMAIL_HOST || 'smtp.gmail.com';
+const EMAIL_PORT = process.env.EMAIL_PORT || 587;
+const EMAIL_USER = process.env.EMAIL_USER || 'pavankumar973106@gmail.com';
+const EMAIL_PASS = process.env.EMAIL_PASS || 'rzes wbza rxhl suly';
+
+// Session configuration
+const isProduction = process.env.NODE_ENV === 'production';
+const SESSION_SECRET = process.env.SESSION_SECRET || 'designers-point-secret-key-2024';
+
+// Create email transporter
+const transporter = nodemailer.createTransport({
+  host: EMAIL_HOST,
+  port: EMAIL_PORT,
+  secure: false,
+  auth: {
+    user: EMAIL_USER,
+    pass: EMAIL_PASS
+  }
+});
+
+// OTP functions
+function generateOTP() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+async function saveOTP(email, otp, purpose = 'registration') {
+  // Delete any existing OTPs for this email
+  await runQuery('DELETE FROM email_otp WHERE email = ? AND purpose = ?', [email, purpose]);
+
+  // Insert new OTP (expires in 10 minutes) - PostgreSQL syntax
+  await runQuery(
+    'INSERT INTO email_otp (email, otp, purpose, expires_at) VALUES (?, ?, ?, NOW() + INTERVAL \'10 minutes\')',
+    [email, otp, purpose]
+  );
+}
+
+async function verifyOTP(email, otp, purpose = 'registration') {
+  const result = await getOne(
+    'SELECT * FROM email_otp WHERE email = ? AND otp = ? AND purpose = ? AND expires_at > NOW()',
+    [email, otp, purpose]
+  );
+  return result !== null;
+}
+
+async function deleteOTP(email, purpose = 'registration') {
+  await runQuery('DELETE FROM email_otp WHERE email = ? AND purpose = ?', [email, purpose]);
+}
+
+async function sendOTPEmail(email, otp) {
+  const mailOptions = {
+    from: `"Designers Point" <${EMAIL_USER}>`,
+    to: email,
+    subject: 'Your OTP for Registration - Designers Point',
+    html: `
+      <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #333;">Welcome to Designers Point!</h2>
+        <p>Your One-Time Password (OTP) for registration is:</p>
+        <div style="background: #f5f5f5; padding: 15px; text-align: center; font-size: 32px; font-weight: bold; letter-spacing: 5px; margin: 20px 0;">
+          ${otp}
+        </div>
+        <p>This OTP will expire in 10 minutes.</p>
+        <p style="color: #666; font-size: 14px;">If you didn't request this, please ignore this email.</p>
+      </div>
+    `
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`OTP sent to ${email}`);
+    return true;
+  } catch (err) {
+    console.error('Error sending email:', err);
+    return false;
+  }
+}
 
 // Razorpay configuration
 // Replace these with your actual Razorpay keys from https://dashboard.razorpay.com
@@ -41,10 +119,10 @@ if (!fs.existsSync(uploadsDir)) {
 }
 
 app.use(session({
-  secret: 'designers-point-secret-key-2024',
+  secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: true,
-  cookie: { secure: false, maxAge: 24 * 60 * 60 * 1000 }
+  cookie: { secure: isProduction, maxAge: 24 * 60 * 60 * 1000 }
 }));
 
 // Session middleware
@@ -58,298 +136,451 @@ app.use((req, res, next) => {
 });
 
 // Products API
-app.get('/api/products', (req, res) => {
-  const { category, featured, minPrice, maxPrice } = req.query;
-  let sql = 'SELECT * FROM products WHERE in_stock = 1';
-  const params = [];
+app.get('/api/products', async (req, res) => {
+  try {
+    const { category, featured, minPrice, maxPrice } = req.query;
+    let sql = 'SELECT * FROM products WHERE in_stock = 1';
+    const params = [];
 
-  if (category) {
-    sql += ' AND category = ?';
-    params.push(category);
-  }
-  if (featured) {
-    sql += ' AND featured = 1';
-  }
-  if (minPrice) {
-    sql += ' AND base_price >= ?';
-    params.push(parseFloat(minPrice));
-  }
-  if (maxPrice) {
-    sql += ' AND base_price <= ?';
-    params.push(parseFloat(maxPrice));
-  }
+    if (category) {
+      sql += ' AND category = ?';
+      params.push(category);
+    }
+    if (featured) {
+      sql += ' AND featured = 1';
+    }
+    if (minPrice) {
+      sql += ' AND base_price >= ?';
+      params.push(parseFloat(minPrice));
+    }
+    if (maxPrice) {
+      sql += ' AND base_price <= ?';
+      params.push(parseFloat(maxPrice));
+    }
 
-  const products = getAll(sql, params);
-  // Parse JSON fields
-  products.forEach(p => {
-    p.colors = JSON.parse(p.colors || '[]');
-    p.sizes = JSON.parse(p.sizes || '[]');
-  });
+    const products = await getAll(sql, params);
+    // Parse JSON fields
+    products.forEach(p => {
+      p.colors = JSON.parse(p.colors || '[]');
+      p.sizes = JSON.parse(p.sizes || '[]');
+    });
 
-  res.json(products);
+    res.json(products);
+  } catch (err) {
+    console.error('Error fetching products:', err);
+    res.status(500).json({ error: 'Failed to fetch products' });
+  }
 });
 
-app.get('/api/products/:id', (req, res) => {
-  const product = getOne('SELECT * FROM products WHERE id = ?', [parseInt(req.params.id)]);
-  if (!product) return res.status(404).json({ error: 'Product not found' });
-  product.colors = JSON.parse(product.colors || '[]');
-  product.sizes = JSON.parse(product.sizes || '[]');
-  res.json(product);
+app.get('/api/products/:id', async (req, res) => {
+  try {
+    const product = await getOne('SELECT * FROM products WHERE id = ?', [parseInt(req.params.id)]);
+    if (!product) return res.status(404).json({ error: 'Product not found' });
+    product.colors = JSON.parse(product.colors || '[]');
+    product.sizes = JSON.parse(product.sizes || '[]');
+    res.json(product);
+  } catch (err) {
+    console.error('Error fetching product:', err);
+    res.status(500).json({ error: 'Failed to fetch product' });
+  }
 });
 
-app.post('/api/products', (req, res) => {
-  const { name, description, base_price, image, colors, sizes, category, featured } = req.body;
-  const sql = `INSERT INTO products (name, description, base_price, image, colors, sizes, category, in_stock, featured)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`;
-  runQuery(sql, [
-    name,
-    description,
-    parseFloat(base_price),
-    image || 'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=400',
-    JSON.stringify(colors || ['White', 'Black', 'Navy', 'Gray']),
-    JSON.stringify(sizes || ['S', 'M', 'L', 'XL', 'XXL']),
-    category || 'tshirt',
-    featured ? 1 : 0
-  ]);
-  res.json({ message: 'Product created' });
+app.post('/api/products', async (req, res) => {
+  try {
+    const { name, description, base_price, image, colors, sizes, category, featured } = req.body;
+    const sql = `INSERT INTO products (name, description, base_price, image, colors, sizes, category, in_stock, featured)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`;
+    await runQuery(sql, [
+      name,
+      description,
+      parseFloat(base_price),
+      image || 'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=400',
+      JSON.stringify(colors || ['White', 'Black', 'Navy', 'Gray']),
+      JSON.stringify(sizes || ['S', 'M', 'L', 'XL', 'XXL']),
+      category || 'tshirt',
+      featured ? 1 : 0
+    ]);
+    res.json({ message: 'Product created' });
+  } catch (err) {
+    console.error('Error creating product:', err);
+    res.status(500).json({ error: 'Failed to create product' });
+  }
 });
 
-app.put('/api/products/:id', (req, res) => {
-  const { name, description, base_price, image, colors, sizes, category, in_stock, featured } = req.body;
-  const sql = `UPDATE products SET name=?, description=?, base_price=?, image=?, colors=?, sizes=?, category=?, in_stock=?, featured=? WHERE id=?`;
-  runQuery(sql, [
-    name,
-    description,
-    parseFloat(base_price),
-    image,
-    JSON.stringify(colors),
-    JSON.stringify(sizes),
-    category,
-    in_stock ? 1 : 0,
-    featured ? 1 : 0,
-    parseInt(req.params.id)
-  ]);
-  res.json({ message: 'Product updated' });
+app.put('/api/products/:id', async (req, res) => {
+  try {
+    const { name, description, base_price, image, colors, sizes, category, in_stock, featured } = req.body;
+    const sql = `UPDATE products SET name=?, description=?, base_price=?, image=?, colors=?, sizes=?, category=?, in_stock=?, featured=? WHERE id=?`;
+    await runQuery(sql, [
+      name,
+      description,
+      parseFloat(base_price),
+      image,
+      JSON.stringify(colors),
+      JSON.stringify(sizes),
+      category,
+      in_stock ? 1 : 0,
+      featured ? 1 : 0,
+      parseInt(req.params.id)
+    ]);
+    res.json({ message: 'Product updated' });
+  } catch (err) {
+    console.error('Error updating product:', err);
+    res.status(500).json({ error: 'Failed to update product' });
+  }
 });
 
-app.delete('/api/products/:id', (req, res) => {
-  runQuery('DELETE FROM products WHERE id = ?', [parseInt(req.params.id)]);
-  res.json({ message: 'Product deleted' });
+app.delete('/api/products/:id', async (req, res) => {
+  try {
+    await runQuery('DELETE FROM products WHERE id = ?', [parseInt(req.params.id)]);
+    res.json({ message: 'Product deleted' });
+  } catch (err) {
+    console.error('Error deleting product:', err);
+    res.status(500).json({ error: 'Failed to delete product' });
+  }
 });
 
 // Cart API
-app.get('/api/cart', (req, res) => {
-  const sessionId = req.session.sessionId;
-  const userId = req.session.user ? req.session.user.id : null;
+app.get('/api/cart', async (req, res) => {
+  try {
+    const sessionId = req.session.sessionId;
+    const userId = req.session.user ? req.session.user.id : null;
 
-  let cart;
-  if (userId) {
-    cart = getAll('SELECT * FROM cart_items WHERE user_id = ?', [userId]);
-  } else {
-    cart = getAll('SELECT * FROM cart_items WHERE session_id = ?', [sessionId]);
+    let cart;
+    if (userId) {
+      cart = await getAll('SELECT * FROM cart_items WHERE user_id = ?', [userId]);
+    } else {
+      cart = await getAll('SELECT * FROM cart_items WHERE session_id = ?', [sessionId]);
+    }
+
+    res.json(cart);
+  } catch (err) {
+    console.error('Error fetching cart:', err);
+    res.status(500).json({ error: 'Failed to fetch cart' });
   }
-
-  res.json(cart);
 });
 
-app.post('/api/cart/add', (req, res) => {
-  const { product_id, product_name, product_image, custom_design, quantity, size, color, price } = req.body;
-  const sessionId = req.session.sessionId;
-  const userId = req.session.user ? req.session.user.id : null;
+app.post('/api/cart/add', async (req, res) => {
+  try {
+    const { product_id, product_name, product_image, custom_design, quantity, size, color, price } = req.body;
+    const sessionId = req.session.sessionId;
+    const userId = req.session.user ? req.session.user.id : null;
 
-  // Check for existing item
-  let existing;
-  const searchParams = userId
-    ? [userId, product_id, size, color]
-    : [sessionId, product_id, size, color];
+    // Check for existing item
+    let existing;
+    const searchParams = userId
+      ? [userId, product_id, size, color]
+      : [sessionId, product_id, size, color];
 
-  if (userId) {
-    existing = getOne(`SELECT * FROM cart_items WHERE user_id = ? AND product_id = ? AND size = ? AND color = ?`,
-      searchParams);
-  } else {
-    existing = getOne(`SELECT * FROM cart_items WHERE session_id = ? AND product_id = ? AND size = ? AND color = ?`,
-      searchParams);
+    if (userId) {
+      existing = await getOne(`SELECT * FROM cart_items WHERE user_id = ? AND product_id = ? AND size = ? AND color = ?`,
+        searchParams);
+    } else {
+      existing = await getOne(`SELECT * FROM cart_items WHERE session_id = ? AND product_id = ? AND size = ? AND color = ?`,
+        searchParams);
+    }
+
+    if (existing) {
+      await runQuery('UPDATE cart_items SET quantity = quantity + ? WHERE id = ?', [quantity || 1, existing.id]);
+    } else {
+      const sql = `INSERT INTO cart_items (session_id, user_id, product_id, product_name, product_image, custom_design, quantity, size, color, price)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+
+      const insertSessionId = userId ? null : sessionId;
+      const insertUserId = userId ? userId : null;
+
+      await runQuery(sql, [
+        insertSessionId,
+        insertUserId,
+        product_id,
+        product_name || '',
+        product_image || '',
+        custom_design || null,
+        quantity || 1,
+        size || 'M',
+        color || 'White',
+        parseFloat(price) || 0
+      ]);
+    }
+
+    // Get updated cart
+    let cart;
+    if (userId) {
+      cart = await getAll('SELECT * FROM cart_items WHERE user_id = ?', [userId]);
+    } else {
+      cart = await getAll('SELECT * FROM cart_items WHERE session_id = ?', [sessionId]);
+    }
+
+    io.emit('cart:updated', { cart, userId, sessionId });
+    res.json({ success: true, cart });
+  } catch (err) {
+    console.error('Error adding to cart:', err);
+    res.status(500).json({ error: 'Failed to add to cart' });
   }
+});
 
-  if (existing) {
-    runQuery('UPDATE cart_items SET quantity = quantity + ? WHERE id = ?', [quantity || 1, existing.id]);
-  } else {
-    const sql = `INSERT INTO cart_items (session_id, user_id, product_id, product_name, product_image, custom_design, quantity, size, color, price)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+app.put('/api/cart/update/:id', async (req, res) => {
+  try {
+    const { quantity } = req.body;
+    const sessionId = req.session.sessionId;
+    const userId = req.session.user ? req.session.user.id : null;
 
-    const insertSessionId = userId ? null : sessionId;
-    const insertUserId = userId ? userId : null;
+    await runQuery('UPDATE cart_items SET quantity = ? WHERE id = ?', [quantity, parseInt(req.params.id)]);
 
-    runQuery(sql, [
-      insertSessionId,
-      insertUserId,
-      product_id,
-      product_name || '',
-      product_image || '',
-      custom_design || null,
-      quantity || 1,
-      size || 'M',
-      color || 'White',
-      parseFloat(price) || 0
+    let cart;
+    if (userId) {
+      cart = await getAll('SELECT * FROM cart_items WHERE user_id = ?', [userId]);
+    } else {
+      cart = await getAll('SELECT * FROM cart_items WHERE session_id = ?', [sessionId]);
+    }
+
+    io.emit('cart:updated', { cart, userId, sessionId });
+    res.json({ success: true, cart });
+  } catch (err) {
+    console.error('Error updating cart:', err);
+    res.status(500).json({ error: 'Failed to update cart' });
+  }
+});
+
+app.delete('/api/cart/remove/:id', async (req, res) => {
+  try {
+    const sessionId = req.session.sessionId;
+    const userId = req.session.user ? req.session.user.id : null;
+
+    await runQuery('DELETE FROM cart_items WHERE id = ?', [parseInt(req.params.id)]);
+
+    let cart;
+    if (userId) {
+      cart = await getAll('SELECT * FROM cart_items WHERE user_id = ?', [userId]);
+    } else {
+      cart = await getAll('SELECT * FROM cart_items WHERE session_id = ?', [sessionId]);
+    }
+
+    io.emit('cart:updated', { cart, userId, sessionId });
+    res.json({ success: true, cart });
+  } catch (err) {
+    console.error('Error removing from cart:', err);
+    res.status(500).json({ error: 'Failed to remove from cart' });
+  }
+});
+
+// Orders API - Only logged in users can order
+app.post('/api/orders', async (req, res) => {
+  try {
+    // Check if user is logged in
+    if (!req.session.user) {
+      return res.status(401).json({ error: 'Please login to place an order' });
+    }
+
+    const { guest_email, guest_name, shipping_name, shipping_phone, shipping_address, city, postal_code, items } = req.body;
+    const userId = req.session.user.id;
+
+    const orderNumber = 'DP' + Date.now().toString(36).toUpperCase();
+    const total_amount = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+
+    const sql = `INSERT INTO orders (order_number, user_id, total_amount, status, payment_method, payment_status, shipping_name, shipping_phone, shipping_address, city, postal_code, items)
+                 VALUES (?, ?, ?, 'pending', 'cod', 'pending', ?, ?, ?, ?, ?, ?)`;
+
+    await runQuery(sql, [
+      orderNumber,
+      userId,
+      total_amount,
+      shipping_name || req.session.user.name || '',
+      shipping_phone || '',
+      shipping_address || '',
+      city || '',
+      postal_code || '',
+      JSON.stringify(items)
     ]);
-  }
 
-  // Get updated cart
-  let cart;
-  if (userId) {
-    cart = getAll('SELECT * FROM cart_items WHERE user_id = ?', [userId]);
-  } else {
-    cart = getAll('SELECT * FROM cart_items WHERE session_id = ?', [sessionId]);
-  }
+    // Clear cart
+    await runQuery('DELETE FROM cart_items WHERE user_id = ?', [userId]);
 
-  io.emit('cart:updated', { cart, userId, sessionId });
-  res.json({ success: true, cart });
+    io.emit('cart:updated', { cart: [], userId, sessionId: req.session.sessionId });
+    io.emit('order:created', { orderNumber, total_amount });
+
+    const order = await getOne('SELECT * FROM orders WHERE order_number = ?', [orderNumber]);
+    res.json({ success: true, orderNumber, orderId: order?.id });
+  } catch (err) {
+    console.error('Error creating order:', err);
+    res.status(500).json({ error: 'Failed to create order' });
+  }
 });
 
-app.put('/api/cart/update/:id', (req, res) => {
-  const { quantity } = req.body;
-  const sessionId = req.session.sessionId;
-  const userId = req.session.user ? req.session.user.id : null;
+app.get('/api/orders', async (req, res) => {
+  try {
+    if (!req.session.user) {
+      return res.status(401).json({ error: 'Please login to view orders' });
+    }
 
-  runQuery('UPDATE cart_items SET quantity = ? WHERE id = ?', [quantity, parseInt(req.params.id)]);
+    const orders = await getAll('SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC', [req.session.user.id]);
+    orders.forEach(order => {
+      order.items = JSON.parse(order.items || '[]');
+    });
 
-  let cart;
-  if (userId) {
-    cart = getAll('SELECT * FROM cart_items WHERE user_id = ?', [userId]);
-  } else {
-    cart = getAll('SELECT * FROM cart_items WHERE session_id = ?', [sessionId]);
+    res.json(orders);
+  } catch (err) {
+    console.error('Error fetching orders:', err);
+    res.status(500).json({ error: 'Failed to fetch orders' });
   }
-
-  io.emit('cart:updated', { cart, userId, sessionId });
-  res.json({ success: true, cart });
 });
 
-app.delete('/api/cart/remove/:id', (req, res) => {
-  const sessionId = req.session.sessionId;
-  const userId = req.session.user ? req.session.user.id : null;
-
-  runQuery('DELETE FROM cart_items WHERE id = ?', [parseInt(req.params.id)]);
-
-  let cart;
-  if (userId) {
-    cart = getAll('SELECT * FROM cart_items WHERE user_id = ?', [userId]);
-  } else {
-    cart = getAll('SELECT * FROM cart_items WHERE session_id = ?', [sessionId]);
-  }
-
-  io.emit('cart:updated', { cart, userId, sessionId });
-  res.json({ success: true, cart });
-});
-
-// Orders API
-app.post('/api/orders', (req, res) => {
-  const { guest_email, guest_name, shipping_name, shipping_phone, shipping_address, city, postal_code, items, payment_method } = req.body;
-  const userId = req.session.user ? req.session.user.id : null;
-
-  const orderNumber = 'DP' + Date.now().toString(36).toUpperCase();
-  const total_amount = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-
-  const sql = `INSERT INTO orders (order_number, user_id, guest_email, guest_name, total_amount, status, payment_method, payment_status, shipping_name, shipping_phone, shipping_address, city, postal_code, items)
-               VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)`;
-
-  runQuery(sql, [
-    orderNumber,
-    userId || null,
-    guest_email || null,
-    guest_name || null,
-    total_amount,
-    payment_method || 'razorpay',
-    payment_method === 'cod' ? 'pending' : 'paid',
-    shipping_name || guest_name || '',
-    shipping_phone || '',
-    shipping_address || '',
-    city || '',
-    postal_code || '',
-    JSON.stringify(items)
-  ]);
-
-  // Clear cart
-  if (userId) {
-    runQuery('DELETE FROM cart_items WHERE user_id = ?', [userId]);
-  } else {
-    runQuery('DELETE FROM cart_items WHERE session_id = ?', [req.session.sessionId]);
-  }
-
-  io.emit('cart:updated', { cart: [], userId, sessionId: req.session.sessionId });
-  io.emit('order:created', { orderNumber, total_amount });
-
-  const order = getOne('SELECT * FROM orders WHERE order_number = ?', [orderNumber]);
-  res.json({ success: true, orderNumber, orderId: order?.id });
-});
-
-app.get('/api/orders', (req, res) => {
-  if (!req.session.user) {
-    return res.status(401).json({ error: 'Please login to view orders' });
-  }
-
-  const orders = getAll('SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC', [req.session.user.id]);
-  orders.forEach(order => {
+app.get('/api/orders/:orderNumber', async (req, res) => {
+  try {
+    const order = await getOne('SELECT * FROM orders WHERE order_number = ?', [req.params.orderNumber]);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
     order.items = JSON.parse(order.items || '[]');
-  });
-
-  res.json(orders);
-});
-
-app.get('/api/orders/:orderNumber', (req, res) => {
-  const order = getOne('SELECT * FROM orders WHERE order_number = ?', [req.params.orderNumber]);
-  if (!order) return res.status(404).json({ error: 'Order not found' });
-  order.items = JSON.parse(order.items || '[]');
-  res.json(order);
+    res.json(order);
+  } catch (err) {
+    console.error('Error fetching order:', err);
+    res.status(500).json({ error: 'Failed to fetch order' });
+  }
 });
 
 // Auth API
-app.post('/api/auth/register', async (req, res) => {
-  const { email, password, name, phone } = req.body;
+app.post('/api/auth/register/send-otp', async (req, res) => {
+  try {
+    const { email } = req.body;
 
-  const existing = getOne('SELECT * FROM users WHERE email = ?', [email]);
-  if (existing) {
-    return res.status(400).json({ error: 'Email already registered' });
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    const existing = await getOne('SELECT * FROM users WHERE email = ?', [email]);
+    if (existing) {
+      return res.status(400).json({ error: 'Email already registered' });
+    }
+
+    // Check if OTP was recently sent (rate limiting)
+    const recentOTP = await getOne(
+      'SELECT * FROM email_otp WHERE email = ? AND purpose = "registration" AND created_at > NOW() - INTERVAL '1 minute'',
+      [email]
+    );
+
+    if (recentOTP) {
+      return res.status(429).json({ error: 'Please wait before requesting another OTP' });
+    }
+
+    const otp = generateOTP();
+    await saveOTP(email, otp, 'registration');
+
+    const emailSent = await sendOTPEmail(email, otp);
+    if (!emailSent) {
+      return res.status(500).json({ error: 'Failed to send OTP. Please check email configuration.' });
+    }
+
+    res.json({ success: true, message: 'OTP sent to your email' });
+  } catch (err) {
+    console.error('Error sending OTP:', err);
+    res.status(500).json({ error: 'Failed to send OTP' });
   }
+});
 
-  const hashedPassword = await bcrypt.hash(password, 10);
+app.post('/api/auth/register/verify', async (req, res) => {
+  try {
+    const { email, password, name, phone, otp } = req.body;
 
-  // Check if this is the first user (make them admin)
-  const userCount = getOne('SELECT COUNT(*) as count FROM users');
-  const isAdmin = userCount?.count === 0 ? 1 : 0;
+    if (!email || !password || !name || !otp) {
+      return res.status(400).json({ error: 'All fields are required' });
+    }
 
-  const sql = `INSERT INTO users (email, password, name, phone, is_admin) VALUES (?, ?, ?, ?, ?)`;
-  runQuery(sql, [email, hashedPassword, name, phone || null, isAdmin]);
+    // Verify OTP
+    const isValid = await verifyOTP(email, otp, 'registration');
+    if (!isValid) {
+      return res.status(400).json({ error: 'Invalid or expired OTP' });
+    }
 
-  const newUser = getOne('SELECT * FROM users WHERE email = ?', [email]);
-  req.session.user = { id: newUser.id, email: newUser.email, name: newUser.name, phone: newUser.phone, is_admin: newUser.is_admin };
+    const existing = await getOne('SELECT * FROM users WHERE email = ?', [email]);
+    if (existing) {
+      return res.status(400).json({ error: 'Email already registered' });
+    }
 
-  res.json({ success: true, user: req.session.user });
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Check if this is the first user (make them admin)
+    const userCount = await getOne('SELECT COUNT(*) as count FROM users');
+    const isAdmin = userCount?.count === 0 ? 1 : 0;
+
+    const sql = `INSERT INTO users (email, password, name, phone, is_admin) VALUES (?, ?, ?, ?, ?)`;
+    await runQuery(sql, [email, hashedPassword, name, phone || null, isAdmin]);
+
+    // Delete used OTP
+    await deleteOTP(email, 'registration');
+
+    const newUser = await getOne('SELECT * FROM users WHERE email = ?', [email]);
+    req.session.user = { id: newUser.id, email: newUser.email, name: newUser.name, phone: newUser.phone, is_admin: newUser.is_admin };
+
+    res.json({ success: true, user: req.session.user });
+  } catch (err) {
+    console.error('Error verifying OTP:', err);
+    res.status(500).json({ error: 'Failed to verify OTP' });
+  }
+});
+
+// Legacy register endpoint - redirects to OTP flow
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { email, password, name, phone } = req.body;
+
+    const existing = await getOne('SELECT * FROM users WHERE email = ?', [email]);
+    if (existing) {
+      return res.status(400).json({ error: 'Email already registered' });
+    }
+
+    // Check if OTP was recently sent (rate limiting)
+    const recentOTP = await getOne(
+      'SELECT * FROM email_otp WHERE email = ? AND purpose = "registration" AND created_at > NOW() - INTERVAL '1 minute'',
+      [email]
+    );
+
+    if (recentOTP) {
+      return res.status(429).json({ error: 'Please wait before requesting another OTP' });
+    }
+
+    const otp = generateOTP();
+    await saveOTP(email, otp, 'registration');
+
+    const emailSent = await sendOTPEmail(email, otp);
+    if (!emailSent) {
+      return res.status(500).json({ error: 'Failed to send OTP. Please check email configuration.' });
+    }
+
+    res.json({ success: true, message: 'OTP sent to your email', requiresVerification: true });
+  } catch (err) {
+    console.error('Error registering user:', err);
+    res.status(500).json({ error: 'Failed to register user' });
+  }
 });
 
 app.post('/api/auth/login', async (req, res) => {
-  const { email, password } = req.body;
+  try {
+    const { email, password } = req.body;
 
-  const user = getOne('SELECT * FROM users WHERE email = ?', [email]);
-  if (!user) {
-    return res.status(400).json({ error: 'Invalid credentials' });
+    const user = await getOne('SELECT * FROM users WHERE email = ?', [email]);
+    if (!user) {
+      return res.status(400).json({ error: 'Invalid credentials' });
+    }
+
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid) {
+      return res.status(400).json({ error: 'Invalid credentials' });
+    }
+
+    // Migrate guest cart to user
+    if (req.session.sessionId) {
+      const guestItems = await getAll('SELECT * FROM cart_items WHERE session_id = ?', [req.session.sessionId]);
+      for (const item of guestItems) {
+        await runQuery('UPDATE cart_items SET user_id = ?, session_id = NULL WHERE id = ?', [user.id, item.id]);
+      }
+    }
+
+    req.session.user = { id: user.id, email: user.email, name: user.name, phone: user.phone, is_admin: user.is_admin };
+
+    res.json({ success: true, user: req.session.user });
+  } catch (err) {
+    console.error('Error logging in:', err);
+    res.status(500).json({ error: 'Failed to log in' });
   }
-
-  const valid = await bcrypt.compare(password, user.password);
-  if (!valid) {
-    return res.status(400).json({ error: 'Invalid credentials' });
-  }
-
-  // Migrate guest cart to user
-  if (req.session.sessionId) {
-    const guestItems = getAll('SELECT * FROM cart_items WHERE session_id = ?', [req.session.sessionId]);
-    guestItems.forEach(item => {
-      runQuery('UPDATE cart_items SET user_id = ?, session_id = NULL WHERE id = ?', [user.id, item.id]);
-    });
-  }
-
-  req.session.user = { id: user.id, email: user.email, name: user.name, phone: user.phone, is_admin: user.is_admin };
-
-  res.json({ success: true, user: req.session.user });
 });
 
 app.post('/api/auth/logout', (req, res) => {
@@ -365,29 +596,55 @@ app.get('/api/auth/me', (req, res) => {
   }
 });
 
-// Admin API
-app.get('/api/admin/orders', (req, res) => {
-  if (!req.session.user || !req.session.user.is_admin) {
-    return res.status(403).json({ error: 'Admin access required' });
-  }
+// Check if email exists
+app.get('/api/auth/check-email', async (req, res) => {
+  try {
+    const { email } = req.query;
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
 
-  const orders = getAll('SELECT * FROM orders ORDER BY created_at DESC');
-  orders.forEach(order => {
-    order.items = JSON.parse(order.items || '[]');
-  });
-  res.json(orders);
+    const existing = await getOne('SELECT id FROM users WHERE email = ?', [email]);
+    res.json({ exists: !!existing });
+  } catch (err) {
+    console.error('Error checking email:', err);
+    res.status(500).json({ error: 'Failed to check email' });
+  }
 });
 
-app.put('/api/admin/orders/:orderNumber/status', (req, res) => {
-  if (!req.session.user || !req.session.user.is_admin) {
-    return res.status(403).json({ error: 'Admin access required' });
+// Admin API
+app.get('/api/admin/orders', async (req, res) => {
+  try {
+    if (!req.session.user || !req.session.user.is_admin) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const orders = await getAll('SELECT * FROM orders ORDER BY created_at DESC');
+    orders.forEach(order => {
+      order.items = JSON.parse(order.items || '[]');
+    });
+    res.json(orders);
+  } catch (err) {
+    console.error('Error fetching admin orders:', err);
+    res.status(500).json({ error: 'Failed to fetch orders' });
   }
+});
 
-  const { status } = req.body;
-  runQuery('UPDATE orders SET status = ? WHERE order_number = ?', [status, req.params.orderNumber]);
-  io.emit('order:status', { orderNumber: req.params.orderNumber, status });
+app.put('/api/admin/orders/:orderNumber/status', async (req, res) => {
+  try {
+    if (!req.session.user || !req.session.user.is_admin) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
 
-  res.json({ success: true });
+    const { status } = req.body;
+    await runQuery('UPDATE orders SET status = ? WHERE order_number = ?', [status, req.params.orderNumber]);
+    io.emit('order:status', { orderNumber: req.params.orderNumber, status });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error updating order status:', err);
+    res.status(500).json({ error: 'Failed to update order status' });
+  }
 });
 
 // File upload
@@ -402,20 +659,30 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
-app.post('/api/designs/upload', upload.single('design'), (req, res) => {
-  const { name, category } = req.body;
-  const image = '/uploads/' + req.file.filename;
+app.post('/api/designs/upload', upload.single('design'), async (req, res) => {
+  try {
+    const { name, category } = req.body;
+    const image = '/uploads/' + req.file.filename;
 
-  const sql = `INSERT INTO designs (name, image, category) VALUES (?, ?, ?)`;
-  runQuery(sql, [name || 'Custom Design', image, category || 'custom']);
+    const sql = `INSERT INTO designs (name, image, category) VALUES (?, ?, ?)`;
+    await runQuery(sql, [name || 'Custom Design', image, category || 'custom']);
 
-  const design = getOne('SELECT * FROM designs WHERE image = ?', [image]);
-  res.json({ success: true, image, id: design?.id });
+    const design = await getOne('SELECT * FROM designs WHERE image = ?', [image]);
+    res.json({ success: true, image, id: design?.id });
+  } catch (err) {
+    console.error('Error uploading design:', err);
+    res.status(500).json({ error: 'Failed to upload design' });
+  }
 });
 
-app.get('/api/designs', (req, res) => {
-  const designs = getAll('SELECT * FROM designs ORDER BY created_at DESC');
-  res.json(designs);
+app.get('/api/designs', async (req, res) => {
+  try {
+    const designs = await getAll('SELECT * FROM designs ORDER BY created_at DESC');
+    res.json(designs);
+  } catch (err) {
+    console.error('Error fetching designs:', err);
+    res.status(500).json({ error: 'Failed to fetch designs' });
+  }
 });
 
 // ============ RAZORPAY PAYMENT API ============
@@ -441,7 +708,7 @@ app.post('/api/payment/create-order', async (req, res) => {
     // Store pending payment
     const sql = `INSERT INTO pending_payments (order_id, razorpay_order_id, amount, currency, status)
                  VALUES (?, ?, ?, ?, 'created')`;
-    runQuery(sql, [order.receipt, order.id, amount, currency]);
+    await runQuery(sql, [order.receipt, order.id, amount, currency]);
 
     res.json(order);
   } catch (error) {
@@ -462,12 +729,12 @@ app.post('/api/payment/verify', async (req, res) => {
 
     if (generated_signature === razorpay_signature) {
       // Update pending payment status
-      runQuery(`UPDATE pending_payments SET status = 'verified' WHERE razorpay_order_id = ?`,
+      await runQuery(`UPDATE pending_payments SET status = 'verified' WHERE razorpay_order_id = ?`,
         [razorpay_order_id]);
 
       res.json({ success: true, verified: true });
     } else {
-      runQuery(`UPDATE pending_payments SET status = 'failed' WHERE razorpay_order_id = ?`,
+      await runQuery(`UPDATE pending_payments SET status = 'failed' WHERE razorpay_order_id = ?`,
         [razorpay_order_id]);
       res.status(400).json({ error: 'Invalid signature' });
     }

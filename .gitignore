@@ -1,9 +1,6 @@
 # Dependencies
 node_modules/
 
-# Database
-database.sqlite
-
 # Environment
 .env
 .env.local
@@ -20,3 +17,6 @@ npm-debug.log*
 .idea/
 *.swp
 *.swo
+
+# Cookies
+cookies.txt
