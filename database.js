@@ -16,26 +16,13 @@ async function initDatabase() {
     connectionTimeoutMillis: 2000,
   };
 
-  // First connect to postgres database to create our database if needed
-  const adminConfig = { ...config, database: 'postgres' };
-  let adminPool;
-
-  try {
-    adminPool = new Pool(adminConfig);
-    const res = await adminPool.query(`SELECT 1 FROM pg_database WHERE datname = $1`, [config.database]);
-    if (res.rows.length === 0) {
-      await adminPool.query(`CREATE DATABASE ${config.database}`);
-      console.log(`Database '${config.database}' created`);
-    }
-    await adminPool.end();
-  } catch (err) {
-    console.error('Failed to create database:', err.message);
-    throw err;
-  }
-
-  // Create connection pool
+  // Create connection pool directly - assume database already exists
   pool = new Pool(config);
   console.log('PostgreSQL connection pool created');
+
+  // Test connection
+  await pool.query('SELECT 1');
+  console.log('Database connection verified');
 
   // Create tables
   await pool.query(`
