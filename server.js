@@ -453,7 +453,7 @@ app.post('/api/auth/register/send-otp', async (req, res) => {
 
     // Check if OTP was recently sent (rate limiting)
     const recentOTP = await getOne(
-      'SELECT * FROM email_otp WHERE email = ? AND purpose = "registration" AND created_at > NOW() - INTERVAL '1 minute'',
+      "SELECT * FROM email_otp WHERE email = ? AND purpose = 'registration' AND created_at > NOW() - INTERVAL '1 minute'",
       [email]
     );
 
@@ -529,7 +529,7 @@ app.post('/api/auth/register', async (req, res) => {
 
     // Check if OTP was recently sent (rate limiting)
     const recentOTP = await getOne(
-      'SELECT * FROM email_otp WHERE email = ? AND purpose = "registration" AND created_at > NOW() - INTERVAL '1 minute'',
+      "SELECT * FROM email_otp WHERE email = ? AND purpose = 'registration' AND created_at > NOW() - INTERVAL '1 minute'",
       [email]
     );
 
