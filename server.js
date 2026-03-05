@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -8,7 +9,7 @@ const bcrypt = require('bcryptjs');
 const multer = require('multer');
 const fs = require('fs');
 const Razorpay = require('razorpay');
-const { Resend } = require('resend');
+const nodemailer = require('nodemailer');
 
 const { initDatabase, runQuery, getOne, getAll } = require('./database');
 
@@ -16,14 +17,22 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-// Email configuration
+// Email configuration - Gmail SMTP
 const EMAIL_HOST = process.env.EMAIL_HOST || 'smtp.gmail.com';
 const EMAIL_PORT = parseInt(process.env.EMAIL_PORT) || 587;
 const EMAIL_USER = process.env.EMAIL_USER || 'pavankumar973106@gmail.com';
 const EMAIL_PASS = process.env.EMAIL_PASS || '';
 
-// Resend configuration
-const resend = new Resend(EMAIL_PASS);
+// Create email transporter
+const transporter = nodemailer.createTransport({
+  host: EMAIL_HOST,
+  port: EMAIL_PORT,
+  secure: false,
+  auth: {
+    user: EMAIL_USER,
+    pass: EMAIL_PASS
+  }
+});
 
 // Session configuration
 const isProduction = process.env.NODE_ENV === 'production';
@@ -60,8 +69,8 @@ async function deleteOTP(email, purpose = 'registration') {
 
 async function sendOTPEmail(email, otp) {
   try {
-    const info = await resend.emails.send({
-      from: 'Designers Point <onboarding@resend.dev>',
+    const info = await transporter.sendMail({
+      from: `"Designers Point" <${EMAIL_USER}>`,
       to: email,
       subject: 'Your OTP for Registration - Designers Point',
       html: `
@@ -76,7 +85,7 @@ async function sendOTPEmail(email, otp) {
         </div>
       `
     });
-    console.log(`OTP sent to ${email}:`, info.data?.id);
+    console.log(`OTP sent to ${email}:`, info.messageId);
     return true;
   } catch (err) {
     console.error('Error sending email:', err.message);
