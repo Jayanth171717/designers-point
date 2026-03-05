@@ -19,7 +19,7 @@ const io = new Server(server);
 
 // Email configuration - Gmail SMTP
 const EMAIL_HOST = process.env.EMAIL_HOST || 'smtp.gmail.com';
-const EMAIL_PORT = parseInt(process.env.EMAIL_PORT) || 587;
+const EMAIL_PORT = parseInt(process.env.EMAIL_PORT) || 465;
 const EMAIL_USER = process.env.EMAIL_USER || 'pavankumar973106@gmail.com';
 const EMAIL_PASS = process.env.EMAIL_PASS || '';
 
@@ -27,11 +27,12 @@ const EMAIL_PASS = process.env.EMAIL_PASS || '';
 const transporter = nodemailer.createTransport({
   host: EMAIL_HOST,
   port: EMAIL_PORT,
-  secure: false,
+  secure: true, // Use SSL for port 465
   auth: {
     user: EMAIL_USER,
     pass: EMAIL_PASS
-  }
+  },
+  connectionTimeout: 10000 // 10 second timeout
 });
 
 // Session configuration
